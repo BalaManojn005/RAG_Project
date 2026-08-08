@@ -1,12 +1,18 @@
-from backend.rag.rag_pipeline import build_rag
+from backend.rag.rag_pipeline import (
+    ingest_document,
+    ask_question,
+)
 
 file_path = "data/uploads/report.pdf"
 
-question = "What is this document about?"
+print(ingest_document(file_path))
 
-context = build_rag(file_path, question)
+print()
 
-print("\nRetrieved Context:\n")
+question = "What are the company's quality standards?"
 
-for i, chunk in enumerate(context, 1):
-    print(f"{i}. {chunk}")
+answer = ask_question(question)
+
+print("========== AI ANSWER ==========\n")
+
+print(answer)

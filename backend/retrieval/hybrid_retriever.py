@@ -7,24 +7,39 @@ from backend.retrieval.bm25_retriever import (
 )
 
 
-def retrieve_hybrid(query, index, chunks, top_k=3):
+def retrieve_hybrid(
+    query,
+    index,
+    chunks,
+    top_k=3
+):
     """
     Hybrid retrieval using:
+
     1. Dense retrieval with FAISS
     2. Sparse retrieval with BM25
     3. Reciprocal Rank Fusion (RRF)
+
+    Returns detailed retrieval results so that
+    the RAG pipeline can expose the source chunks.
     """
 
     if not chunks:
         return []
 
-    # -------------------------------------------------
-    # 1. Dense retrieval
-    # -------------------------------------------------
 
-    query_embedding = generate_embeddings([query])[0]
+    # ========================================================
+    # 1. DENSE RETRIEVAL
+    # ========================================================
 
-    dense_k = min(10, len(chunks))
+    query_embedding = generate_embeddings(
+        [query]
+    )[0]
+
+    dense_k = min(
+        10,
+        len(chunks)
+    )
 
     distances, dense_indices = search(
         index,
@@ -38,41 +53,73 @@ def retrieve_hybrid(query, index, chunks, top_k=3):
         if idx != -1
     ]
 
-    # -------------------------------------------------
-    # 2. Sparse retrieval
-    # -------------------------------------------------
 
-    bm25 = create_bm25_index(chunks)
+    # ========================================================
+    # 2. SPARSE RETRIEVAL
+    # ========================================================
 
-    sparse_k = min(10, len(chunks))
+    bm25 = create_bm25_index(
+        chunks
+    )
 
-    sparse_indices, _ = search_bm25(
+    sparse_k = min(
+        10,
+        len(chunks)
+    )
+
+    sparse_indices, sparse_scores = search_bm25(
         bm25,
         query,
         sparse_k
     )
 
-    # -------------------------------------------------
-    # 3. Reciprocal Rank Fusion
-    # -------------------------------------------------
+
+    # ========================================================
+    # 3. RECIPROCAL RANK FUSION
+    # ========================================================
 
     rrf_scores = {}
 
     k = 60
 
-    for rank, idx in enumerate(dense_ranking):
-        rrf_scores[idx] = rrf_scores.get(idx, 0) + (
-            1 / (k + rank + 1)
+
+    # Dense ranking
+
+    for rank, idx in enumerate(
+        dense_ranking
+    ):
+
+        rrf_scores[idx] = (
+            rrf_scores.get(
+                idx,
+                0
+            )
+            + 1 / (
+                k + rank + 1
+            )
         )
 
-    for rank, idx in enumerate(sparse_indices):
-        rrf_scores[idx] = rrf_scores.get(idx, 0) + (
-            1 / (k + rank + 1)
+
+    # Sparse ranking
+
+    for rank, idx in enumerate(
+        sparse_indices
+    ):
+
+        rrf_scores[idx] = (
+            rrf_scores.get(
+                idx,
+                0
+            )
+            + 1 / (
+                k + rank + 1
+            )
         )
 
-    # -------------------------------------------------
-    # 4. Final ranking
-    # -------------------------------------------------
+
+    # ========================================================
+    # 4. FINAL RANKING
+    # ========================================================
 
     ranked_indices = sorted(
         rrf_scores,
@@ -80,4 +127,26 @@ def retrieve_hybrid(query, index, chunks, top_k=3):
         reverse=True
     )[:top_k]
 
-    return [chunks[idx] for idx in ranked_indices]
+
+    # ========================================================
+    # 5. RETURN DETAILED RESULTS
+    # ========================================================
+
+    results = []
+
+    for rank, idx in enumerate(
+        ranked_indices,
+        start=1
+    ):
+
+        results.append(
+            {
+                "chunk_id": idx,
+                "rank": rank,
+                "rrf_score": rrf_scores[idx],
+                "content": chunks[idx],
+            }
+        )
+
+
+    return results

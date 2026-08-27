@@ -18,7 +18,7 @@ pip-wheel-metadata/
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
-
+.env/
 # Unit test / coverage reports
 .pytest_cache/
 .coverage
@@ -117,3 +117,19 @@ credentials.json
 # Misc
 *.bak
 *.swp
+# RAG generated artifacts
+*.pkl
+
+# Local test artifacts
+curl
+backend/venv/
+__pycache__/
+*.pyc
+*.pkl
+.env
+curl
+# RAG generated artifacts
+*.pkl
+
+# Local test artifacts
+curl

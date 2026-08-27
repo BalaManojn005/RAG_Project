@@ -3,8 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.chat import router as chat_router
 from backend.api.upload import router as upload_router
+from backend.api.history import router as history_router
+
 
 app = FastAPI(title="RAG API")
+
+
+# ============================================================
+# CORS
+# ============================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,5 +24,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ============================================================
+# API ROUTES
+# ============================================================
+
 app.include_router(chat_router)
 app.include_router(upload_router)
+app.include_router(history_router)

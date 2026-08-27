@@ -1,8 +1,9 @@
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, File, UploadFile
 
 from backend.rag.rag_pipeline import ingest_document
+
 
 router = APIRouter()
 
@@ -13,11 +14,15 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 @router.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
-    """
-    Upload a PDF and build its FAISS index.
-    """
+    """Upload a PDF and build its FAISS index."""
 
     filename = Path(file.filename or "").name
+
+    if not filename:
+        raise HTTPException(
+            status_code=400,
+            detail="A PDF file is required.",
+        )
 
     if not filename.lower().endswith(".pdf"):
         raise HTTPException(
@@ -27,12 +32,23 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     file_path = UPLOAD_DIR / filename
 
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
+    try:
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
 
-    message = ingest_document(str(file_path))
+        result = ingest_document(str(file_path))
 
-    return {
-        "message": message,
-        "filename": file.filename
-    }
+        return {
+            "message": result.get(
+                "message",
+                "Document indexed successfully.",
+            ),
+            "chunks": result.get("chunks", 0),
+            "filename": filename,
+        }
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process PDF: {exc}",
+        ) from exc

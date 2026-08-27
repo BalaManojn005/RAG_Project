@@ -3,11 +3,12 @@ import "./App.css";
 
 import {
   uploadDocument,
-  askQuestion,
+  streamQuestion,
   getConversations,
   getConversation,
   deleteConversation,
 } from "./services/api";
+
 
 function App() {
   const [file, setFile] = useState(null);
@@ -15,14 +16,24 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [question, setQuestion] = useState("");
 
-  const [conversationId, setConversationId] = useState(null);
-  const [conversations, setConversations] = useState([]);
+  const [conversationId, setConversationId] =
+    useState(null);
 
-  const [uploading, setUploading] = useState(false);
-  const [asking, setAsking] = useState(false);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [conversations, setConversations] =
+    useState([]);
 
-  const [status, setStatus] = useState("");
+  const [uploading, setUploading] =
+    useState(false);
+
+  const [asking, setAsking] =
+    useState(false);
+
+  const [loadingHistory, setLoadingHistory] =
+    useState(false);
+
+  const [status, setStatus] =
+    useState("");
+
 
   // ============================================================
   // LOAD ALL CONVERSATIONS
@@ -32,23 +43,38 @@ function App() {
     try {
       setLoadingHistory(true);
 
-      const result = await getConversations();
+      const result =
+        await getConversations();
 
-      setConversations(result.conversations || []);
+      setConversations(
+        result.conversations || []
+      );
+
     } catch (error) {
-      console.error("History loading error:", error);
+      console.error(
+        "History loading error:",
+        error
+      );
     } finally {
       setLoadingHistory(false);
     }
   };
+
 
   // ============================================================
   // LOAD HISTORY WHEN APP STARTS
   // ============================================================
 
   useEffect(() => {
-    loadConversations();
+    const timer =
+      window.setTimeout(() => {
+        void loadConversations();
+      }, 0);
+
+    return () =>
+      window.clearTimeout(timer);
   }, []);
+
 
   // ============================================================
   // UPLOAD DOCUMENT
@@ -56,27 +82,44 @@ function App() {
 
   const handleUpload = async () => {
     if (!file) {
-      setStatus("Please choose a PDF first.");
+      setStatus(
+        "Please choose a PDF first."
+      );
       return;
     }
 
     try {
       setUploading(true);
-      setStatus("Uploading and indexing document...");
 
-      const result = await uploadDocument(file);
+      setStatus(
+        "Uploading and indexing document..."
+      );
+
+      const result =
+        await uploadDocument(file);
 
       setStatus(
         `✅ ${result.filename} indexed successfully.`
       );
-    } catch (error) {
-      console.error("Upload error:", error);
 
-      setStatus("❌ Upload failed.");
+    } catch (error) {
+      console.error(
+        "Upload error:",
+        error
+      );
+
+      setStatus(
+        `❌ ${
+          error.message ||
+          "Upload failed."
+        }`
+      );
+
     } finally {
       setUploading(false);
     }
   };
+
 
   // ============================================================
   // NEW CHAT
@@ -89,79 +132,107 @@ function App() {
     setStatus("");
   };
 
+
   // ============================================================
   // OPEN CONVERSATION
   // ============================================================
 
-  const handleOpenConversation = async (id) => {
-    if (asking) {
-      return;
-    }
+  const handleOpenConversation =
+    async (id) => {
 
-    try {
-      setLoadingHistory(true);
+      if (asking) {
+        return;
+      }
 
-      const conversation = await getConversation(id);
+      try {
+        setLoadingHistory(true);
 
-      setConversationId(conversation.id);
+        const conversation =
+          await getConversation(id);
 
-      setMessages(conversation.messages || []);
+        setConversationId(
+          conversation.id
+        );
 
-      setQuestion("");
+        setMessages(
+          conversation.messages || []
+        );
 
-      setStatus("");
-    } catch (error) {
-      console.error(
-        "Conversation loading error:",
-        error
-      );
+        setQuestion("");
+        setStatus("");
 
-      setStatus("❌ Failed to load conversation.");
-    } finally {
-      setLoadingHistory(false);
-    }
-  };
+      } catch (error) {
+        console.error(
+          "Conversation loading error:",
+          error
+        );
+
+        setStatus(
+          "❌ Failed to load conversation."
+        );
+
+      } finally {
+        setLoadingHistory(false);
+      }
+    };
+
 
   // ============================================================
   // DELETE CONVERSATION
   // ============================================================
 
-  const handleDeleteConversation = async (id) => {
-    if (asking) {
-      return;
-    }
+  const handleDeleteConversation =
+    async (id) => {
 
-    try {
-      await deleteConversation(id);
-
-      if (conversationId === id) {
-        setConversationId(null);
-        setMessages([]);
-        setQuestion("");
-        setStatus("");
+      if (asking) {
+        return;
       }
 
-      await loadConversations();
-    } catch (error) {
-      console.error(
-        "Delete conversation error:",
-        error
-      );
+      try {
+        setLoadingHistory(true);
 
-      setStatus("❌ Failed to delete conversation.");
-    }
-  };
+        await deleteConversation(id);
+
+        if (conversationId === id) {
+          setConversationId(null);
+          setMessages([]);
+          setQuestion("");
+          setStatus("");
+        }
+
+        await loadConversations();
+
+      } catch (error) {
+        console.error(
+          "Delete conversation error:",
+          error
+        );
+
+        setStatus(
+          "❌ Failed to delete conversation."
+        );
+
+      } finally {
+        setLoadingHistory(false);
+      }
+    };
+
 
   // ============================================================
-  // ASK QUESTION
+  // ASK QUESTION — TRUE STREAMING
   // ============================================================
 
   const handleAsk = async () => {
-    const trimmedQuestion = question.trim();
+    const trimmedQuestion =
+      question.trim();
 
-    if (!trimmedQuestion || asking) {
+    if (
+      !trimmedQuestion ||
+      asking
+    ) {
       return;
     }
+
 
     // ----------------------------------------------------------
     // Add user message immediately
@@ -172,60 +243,238 @@ function App() {
       {
         role: "user",
         content: trimmedQuestion,
+        timestamp:
+          new Date().toISOString(),
       },
     ]);
 
+
+    // ----------------------------------------------------------
+    // Create empty assistant message
+    // ----------------------------------------------------------
+
+    setMessages((previous) => [
+      ...previous,
+      {
+        role: "assistant",
+        content: "",
+        sources: [],
+        streaming: true,
+        timestamp:
+          new Date().toISOString(),
+      },
+    ]);
+
+
     setQuestion("");
     setAsking(true);
+    setStatus("");
+
 
     try {
-      // --------------------------------------------------------
-      // Send question with current conversation ID
-      // --------------------------------------------------------
 
-      const result = await askQuestion(
+      await streamQuestion(
         trimmedQuestion,
-        conversationId
+        conversationId,
+        {
+
+          // ====================================================
+          // CONVERSATION ID
+          // ====================================================
+
+          onConversation: (id) => {
+            setConversationId(id);
+          },
+
+
+          // ====================================================
+          // TOKEN
+          // ====================================================
+
+          onToken: (token) => {
+
+            setMessages((previous) => {
+
+              const updated = [
+                ...previous,
+              ];
+
+              const lastIndex =
+                updated.length - 1;
+
+              if (
+                updated[lastIndex]?.role ===
+                "assistant"
+              ) {
+
+                updated[lastIndex] = {
+                  ...updated[lastIndex],
+
+                  content:
+                    (
+                      updated[lastIndex]
+                        .content || ""
+                    ) + token,
+                };
+              }
+
+              return updated;
+            });
+          },
+
+
+          // ====================================================
+          // SOURCES
+          // ====================================================
+
+          onSources: (sources) => {
+
+            setMessages((previous) => {
+
+              const updated = [
+                ...previous,
+              ];
+
+              const lastIndex =
+                updated.length - 1;
+
+              if (
+                updated[lastIndex]?.role ===
+                "assistant"
+              ) {
+
+                updated[lastIndex] = {
+                  ...updated[lastIndex],
+
+                  sources:
+                    sources || [],
+                };
+              }
+
+              return updated;
+            });
+          },
+
+
+          // ====================================================
+          // STREAM COMPLETE
+          // ====================================================
+
+          onDone: (id) => {
+
+            if (id) {
+              setConversationId(id);
+            }
+
+
+            setMessages((previous) => {
+
+              const updated = [
+                ...previous,
+              ];
+
+              const lastIndex =
+                updated.length - 1;
+
+              if (
+                updated[lastIndex]?.role ===
+                "assistant"
+              ) {
+
+                updated[lastIndex] = {
+                  ...updated[lastIndex],
+
+                  streaming: false,
+                };
+              }
+
+              return updated;
+            });
+          },
+
+
+          // ====================================================
+          // STREAM ERROR
+          // ====================================================
+
+          onError: (message) => {
+
+            throw new Error(
+              message ||
+              "Streaming failed."
+            );
+          },
+        }
       );
 
-      // --------------------------------------------------------
-      // Save conversation ID
-      // --------------------------------------------------------
-
-      setConversationId(result.conversation_id);
-
-      // --------------------------------------------------------
-      // Add AI answer
-      // --------------------------------------------------------
-
-      setMessages((previous) => [
-        ...previous,
-        {
-          role: "assistant",
-          content: result.answer,
-        },
-      ]);
 
       // --------------------------------------------------------
       // Refresh history
       // --------------------------------------------------------
 
       await loadConversations();
-    } catch (error) {
-      console.error("Chat error:", error);
 
-      setMessages((previous) => [
-        ...previous,
-        {
-          role: "assistant",
-          content:
-            "❌ Failed to get an answer from the AI.",
-        },
-      ]);
+    } catch (error) {
+
+      console.error(
+        "Streaming chat error:",
+        error
+      );
+
+
+      setMessages((previous) => {
+
+        const updated = [
+          ...previous,
+        ];
+
+        const lastIndex =
+          updated.length - 1;
+
+        if (
+          updated[lastIndex]?.role ===
+          "assistant"
+        ) {
+
+          updated[lastIndex] = {
+            ...updated[lastIndex],
+
+            content:
+              `❌ ${
+                error.message ||
+                "Failed to get an answer from the AI."
+              }`,
+
+            streaming: false,
+          };
+        }
+
+        return updated;
+      });
+
     } finally {
       setAsking(false);
     }
   };
+
+
+  // ============================================================
+  // ENTER KEY
+  // ============================================================
+
+  const handleKeyDown = (event) => {
+
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey
+    ) {
+
+      event.preventDefault();
+
+      handleAsk();
+    }
+  };
+
 
   // ============================================================
   // UI
@@ -239,18 +488,25 @@ function App() {
       ====================================================== */}
 
       <header className="header">
-        <h1>AI Document Assistant</h1>
+
+        <h1>
+          AI Document Assistant
+        </h1>
 
         <p>
-          Upload a document and ask questions about it.
+          Upload a document and ask
+          questions about it.
         </p>
+
       </header>
+
 
       {/* ======================================================
           MAIN
       ====================================================== */}
 
       <main className="container">
+
 
         {/* ====================================================
             HISTORY SIDEBAR
@@ -260,7 +516,9 @@ function App() {
 
           <div className="history-header">
 
-            <h2>🕘 History</h2>
+            <h2>
+              🕘 History
+            </h2>
 
             <button
               onClick={handleNewChat}
@@ -271,6 +529,7 @@ function App() {
 
           </div>
 
+
           <div className="history-list">
 
             {loadingHistory &&
@@ -280,6 +539,7 @@ function App() {
                 </div>
               )}
 
+
             {!loadingHistory &&
               conversations.length === 0 && (
                 <div className="history-empty">
@@ -287,63 +547,85 @@ function App() {
                 </div>
               )}
 
-            {conversations.map((conversation) => (
-              <div
-                key={conversation.id}
-                className={`history-item ${
-                  conversationId === conversation.id
-                    ? "active"
-                    : ""
-                }`}
-              >
 
-                {/* Open conversation */}
+            {conversations.map(
+              (conversation) => (
 
-                <button
-                  className="history-open"
-                  onClick={() =>
-                    handleOpenConversation(
+                <div
+                  key={conversation.id}
+                  className={
+                    `history-item ${
+                      conversationId ===
                       conversation.id
-                    )
-                  }
-                  disabled={
-                    loadingHistory || asking
+                        ? "active"
+                        : ""
+                    }`
                   }
                 >
-                  <div className="history-title">
-                    {conversation.title ||
-                      "New Chat"}
-                  </div>
 
-                  <div className="history-date">
-                    {conversation.updated_at
-                      ? new Date(
-                          conversation.updated_at
-                        ).toLocaleString()
-                      : ""}
-                  </div>
-                </button>
+                  {/* Open */}
 
-                {/* Delete conversation */}
+                  <button
+                    className="history-open"
+                    onClick={() =>
+                      handleOpenConversation(
+                        conversation.id
+                      )
+                    }
+                    disabled={
+                      loadingHistory ||
+                      asking
+                    }
+                  >
 
-                <button
-                  className="history-delete"
-                  onClick={() =>
-                    handleDeleteConversation(
-                      conversation.id
-                    )
-                  }
-                  disabled={asking}
-                  title="Delete conversation"
-                >
-                  🗑️
-                </button>
+                    <div className="history-title">
 
-              </div>
-            ))}
+                      {
+                        conversation.title ||
+                        "New Chat"
+                      }
+
+                    </div>
+
+
+                    <div className="history-date">
+
+                      {
+                        conversation.updated_at
+                          ? new Date(
+                              conversation.updated_at
+                            ).toLocaleString()
+                          : ""
+                      }
+
+                    </div>
+
+                  </button>
+
+
+                  {/* Delete */}
+
+                  <button
+                    className="history-delete"
+                    onClick={() =>
+                      handleDeleteConversation(
+                        conversation.id
+                      )
+                    }
+                    disabled={asking}
+                    title="Delete conversation"
+                  >
+                    🗑️
+                  </button>
+
+                </div>
+              )
+            )}
 
           </div>
+
         </aside>
+
 
         {/* ====================================================
             MAIN CONTENT
@@ -351,68 +633,100 @@ function App() {
 
         <section className="main-content">
 
+
           {/* ==================================================
-              UPLOAD SECTION
+              UPLOAD
           ================================================== */}
 
           <section className="upload-card">
 
-            <h2>📄 Upload Document</h2>
+            <h2>
+              📄 Upload Document
+            </h2>
+
 
             <div className="upload-box">
 
               <p>
-                Choose a PDF document to analyze
+                Choose a PDF document
+                to analyze
               </p>
+
 
               <input
                 type="file"
                 accept=".pdf"
-                onChange={(e) =>
-                  setFile(e.target.files[0])
-                }
+                onChange={(event) => {
+
+                  setFile(
+                    event.target.files?.[0] ||
+                    null
+                  );
+
+                }}
               />
+
 
               {file && (
                 <p>
                   Selected:{" "}
-                  <strong>{file.name}</strong>
+                  <strong>
+                    {file.name}
+                  </strong>
                 </p>
               )}
+
 
               <button
                 onClick={handleUpload}
                 disabled={uploading}
               >
-                {uploading
-                  ? "Indexing..."
-                  : "Upload & Index"}
+
+                {
+                  uploading
+                    ? "Indexing..."
+                    : "Upload & Index"
+                }
+
               </button>
 
-              {status && <p>{status}</p>}
+
+              {status && (
+                <p>
+                  {status}
+                </p>
+              )}
 
             </div>
+
           </section>
 
+
           {/* ==================================================
-              CHAT SECTION
+              CHAT
           ================================================== */}
 
           <section className="chat-card">
 
-            {/* Chat header */}
+
+            {/* Chat Header */}
 
             <div className="chat-header">
 
               <div>
-                <h2>💬 Ask Your Document</h2>
+
+                <h2>
+                  💬 Ask Your Document
+                </h2>
 
                 {conversationId && (
                   <small>
                     Conversation active
                   </small>
                 )}
+
               </div>
+
 
               <button
                 onClick={handleNewChat}
@@ -423,6 +737,7 @@ function App() {
 
             </div>
 
+
             {/* =================================================
                 CHAT WINDOW
             ================================================= */}
@@ -431,61 +746,196 @@ function App() {
 
               {messages.length === 0 && (
                 <div className="empty-chat">
-                  🤖 Ask a question about your document.
+
+                  🤖 Ask a question
+                  about your document.
+
                 </div>
               )}
 
-              {messages.map((message, index) => (
-                <div
-                  key={`${message.timestamp || ""}-${index}`}
-                  className={`message ${message.role}`}
-                >
 
-                  <div className="message-label">
-                    {message.role === "user"
-                      ? "👤 You"
-                      : "🤖 AI"}
+              {messages.map(
+                (message, index) => (
+
+                  <div
+                    key={
+                      `${message.timestamp || ""}-${index}`
+                    }
+                    className={
+                      `message ${message.role}`
+                    }
+                  >
+
+                    <div className="message-label">
+
+                      {
+                        message.role ===
+                        "user"
+                          ? "👤 You"
+                          : "🤖 AI"
+                      }
+
+                    </div>
+
+
+                    <div className="message-content">
+
+                      {message.content}
+
+                      {/* Streaming cursor */}
+
+                      {message.streaming && (
+                        <span className="streaming-cursor">
+                          ▋
+                        </span>
+                      )}
+
+                    </div>
+
+
+                    {/* =================================================
+                        SOURCES
+                    ================================================= */}
+
+                    {
+                      message.role ===
+                        "assistant" &&
+                      message.sources?.length >
+                        0 && (
+
+                        <details className="sources">
+
+                          <summary>
+                            📚 Sources (
+                            {
+                              message.sources.length
+                            }
+                            )
+                          </summary>
+
+
+                          <div className="sources-list">
+
+                            {
+                              message.sources.map(
+                                (
+                                  source,
+                                  sourceIndex
+                                ) => (
+
+                                  <div
+                                    key={
+                                      sourceIndex
+                                    }
+                                    className="source-item"
+                                  >
+
+                                    <div>
+                                      <strong>
+                                        Source{" "}
+                                        {
+                                          source.rank ||
+                                          sourceIndex +
+                                            1
+                                        }
+                                      </strong>
+                                    </div>
+
+
+                                    {
+                                      source.chunk_id !==
+                                        undefined && (
+                                        <div>
+                                          Chunk:{" "}
+                                          {
+                                            source.chunk_id
+                                          }
+                                        </div>
+                                      )
+                                    }
+
+
+                                    {source.score !==
+                                      undefined &&
+                                      source.score !==
+                                        null && (
+                                        <div>
+                                          Score:{" "}
+                                          {
+                                            Number(
+                                              source.score
+                                            ).toFixed(
+                                              4
+                                            )
+                                          }
+                                        </div>
+                                      )}
+
+
+                                    {source.content && (
+                                      <p>
+                                        {
+                                          source.content
+                                        }
+                                      </p>
+                                    )}
+
+                                  </div>
+                                )
+                              )
+                            }
+
+                          </div>
+
+                        </details>
+                      )
+                    }
+
                   </div>
-
-                  <div className="message-content">
-                    {message.content}
-                  </div>
-
-                </div>
-              ))}
-
-              {/* =================================================
-                  AI THINKING INDICATOR
-              ================================================= */}
-
-              {asking && (
-                <div className="message assistant">
-
-                  <div className="message-label">
-                    🤖 AI
-                  </div>
-
-                  <div className="message-content thinking-content">
-
-                    <span className="thinking-text">
-                      Thinking
-                    </span>
-
-                    <span className="thinking-dots">
-
-                      <span className="thinking-dot"></span>
-
-                      <span className="thinking-dot"></span>
-
-                      <span className="thinking-dot"></span>
-
-                    </span>
-
-                  </div>
-                </div>
+                )
               )}
+
+
+              {/* Thinking indicator */}
+
+              {asking &&
+                messages[
+                  messages.length - 1
+                ]?.role !==
+                  "assistant" && (
+
+                  <div className="message assistant">
+
+                    <div className="message-label">
+                      🤖 AI
+                    </div>
+
+                    <div className="message-content thinking-content">
+
+                      <span>
+                        Thinking
+                      </span>
+
+                      <span className="thinking-dots">
+
+                        <span className="thinking-dot">
+                        </span>
+
+                        <span className="thinking-dot">
+                        </span>
+
+                        <span className="thinking-dot">
+                        </span>
+
+                      </span>
+
+                    </div>
+
+                  </div>
+                )}
 
             </div>
+
 
             {/* =================================================
                 QUESTION INPUT
@@ -495,33 +945,47 @@ function App() {
 
               <input
                 type="text"
-                placeholder="Ask something about your document..."
-                value={question}
-                onChange={(e) =>
-                  setQuestion(e.target.value)
+                placeholder={
+                  "Ask something about your document..."
                 }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    handleAsk();
-                  }
-                }}
+                value={question}
+                onChange={(event) =>
+                  setQuestion(
+                    event.target.value
+                  )
+                }
+                onKeyDown={handleKeyDown}
                 disabled={asking}
               />
 
+
               <button
                 onClick={handleAsk}
-                disabled={asking}
+                disabled={
+                  asking ||
+                  !question.trim()
+                }
               >
-                {asking ? "..." : "Send"}
+
+                {
+                  asking
+                    ? "Generating..."
+                    : "Send"
+                }
+
               </button>
 
             </div>
 
           </section>
+
         </section>
+
       </main>
+
     </div>
   );
 }
+
 
 export default App;

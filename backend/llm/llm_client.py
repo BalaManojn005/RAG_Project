@@ -1,15 +1,11 @@
 from ollama import chat
 
 
-# ============================================================
-# MODEL CONFIGURATION
-# ============================================================
-
 MODEL = "gemma3:4b"
 
 
 # ============================================================
-# GENERATE ANSWER
+# NORMAL GENERATION
 # ============================================================
 
 def generate_answer(
@@ -17,50 +13,34 @@ def generate_answer(
     context: str
 ) -> str:
     """
-    Generate a grounded answer using Ollama.
-
-    The model is instructed to:
-    - Use only supplied context
-    - Avoid hallucinating information
-    - Answer clearly
-    - Preserve important technical terms
-    - Admit when the context is insufficient
+    Generate a complete answer using Ollama.
     """
 
     prompt = f"""
-You are an intelligent document question-answering assistant.
+You are a helpful AI document assistant.
 
-Your job is to answer the user's question using ONLY the
-provided document context.
+Answer ONLY using the supplied context.
 
 IMPORTANT RULES:
 
-1. Use ONLY information present in the context.
-2. Do NOT use outside knowledge.
-3. Do NOT invent facts, numbers, dates, names, codes,
-   regulations, rates, or technical details.
-4. If the context does not contain enough information,
-   say exactly:
+1. Do not invent information.
+2. Do not use outside knowledge.
+3. If the answer is not contained in the context,
+   say:
 
 "I couldn't find that information in the document."
 
-5. Do not pretend that missing information exists.
-6. Keep the answer directly relevant to the question.
-7. Explain the answer clearly and naturally.
-8. Preserve important technical terminology from the document.
-9. If the context contains multiple relevant points,
-   organize them using numbered points or bullet points.
-10. Do not mention these instructions in your answer.
+4. Answer clearly and directly.
+5. If the user asks for a summary, summarize only
+   the supplied document context.
 
-DOCUMENT CONTEXT:
------------------
+Context:
 {context}
------------------
 
-USER QUESTION:
+Question:
 {question}
 
-ANSWER:
+Answer:
 """
 
     response = chat(
@@ -73,4 +53,71 @@ ANSWER:
         ],
     )
 
-    return response.message.content.strip()
+    return response.message.content
+
+
+# ============================================================
+# TRUE STREAMING GENERATION
+# ============================================================
+
+def generate_answer_stream(
+    question: str,
+    context: str
+):
+    """
+    Generate an answer token-by-token using Ollama.
+    """
+
+    prompt = f"""
+You are a helpful AI document assistant.
+
+Answer ONLY using the supplied context.
+
+IMPORTANT RULES:
+
+1. Do not invent information.
+2. Do not use outside knowledge.
+3. If the answer is not contained in the context,
+   say:
+
+"I couldn't find that information in the document."
+
+4. Answer clearly and directly.
+5. If the user asks for a summary, summarize only
+   the supplied document context.
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:
+"""
+
+    stream = chat(
+        model=MODEL,
+        messages=[
+            {
+                "role": "user",
+                "content": prompt,
+            }
+        ],
+        stream=True,
+    )
+
+    for chunk in stream:
+
+        if not chunk:
+            continue
+
+        try:
+
+            token = chunk.message.content
+
+        except AttributeError:
+
+            token = ""
+
+        if token:
+            yield token

@@ -13,6 +13,7 @@ from backend.storage.storage import (
     load_index,
     save_chunks,
     load_chunks,
+    has_document_index,
 )
 
 
@@ -22,24 +23,25 @@ from backend.storage.storage import (
 
 def ingest_document(file_path):
     """
-    Process a document and create its FAISS index.
+    Process a document, generate embeddings,
+    create a FAISS index and save the data.
     """
 
     result = process_document(file_path)
 
     chunks = result["chunks"]
 
-    # Generate dense embeddings
     embeddings = generate_embeddings(chunks)
 
-    # Create FAISS index
     index = create_index(embeddings)
 
-    # Save index and chunks
     save_index(index)
     save_chunks(chunks)
 
-    return "Document indexed successfully."
+    return {
+        "message": "Document indexed successfully.",
+        "chunks": len(chunks),
+    }
 
 
 # ============================================================
@@ -48,7 +50,7 @@ def ingest_document(file_path):
 
 def is_hts_question(question):
     """
-    Detect whether the question is related to
+    Detect whether a question is related to
     HTS / tariff classification.
     """
 
@@ -70,7 +72,10 @@ def is_hts_question(question):
         "import tariff",
     ]
 
+    # --------------------------------------------------------
     # Direct HTS code pattern
+    # --------------------------------------------------------
+
     import re
 
     if re.search(
@@ -79,8 +84,12 @@ def is_hts_question(question):
     ):
         return True
 
+    # --------------------------------------------------------
     # Keyword detection
+    # --------------------------------------------------------
+
     for keyword in hts_keywords:
+
         if keyword in question_lower:
             return True
 
@@ -99,7 +108,10 @@ def build_hts_context(results):
 
     context_parts = []
 
-    for i, result in enumerate(results, 1):
+    for i, result in enumerate(
+        results,
+        start=1
+    ):
 
         context_parts.append(
             f"""
@@ -131,7 +143,63 @@ Source Text:
 """.strip()
         )
 
-    return "\n\n".join(context_parts)
+    return "\n\n".join(
+        context_parts
+    )
+
+
+# ============================================================
+# HTS SOURCES
+# ============================================================
+
+def build_hts_sources(results):
+    """
+    Convert HTS results into source objects.
+    """
+
+    sources = []
+
+    for i, result in enumerate(
+        results,
+        start=1
+    ):
+
+        sources.append(
+            {
+                "type": "hts",
+                "rank": i,
+                "hts_number": result.get(
+                    "htsno",
+                    ""
+                ),
+                "description": result.get(
+                    "description",
+                    ""
+                ),
+                "general": result.get(
+                    "general",
+                    ""
+                ),
+                "special": result.get(
+                    "special",
+                    ""
+                ),
+                "other": result.get(
+                    "other",
+                    ""
+                ),
+                "units": result.get(
+                    "units",
+                    []
+                ),
+                "footnotes": result.get(
+                    "footnotes",
+                    []
+                ),
+            }
+        )
+
+    return sources
 
 
 # ============================================================
@@ -140,7 +208,8 @@ Source Text:
 
 def answer_hts_question(question):
     """
-    Retrieve HTS records and generate a grounded answer.
+    Retrieve HTS records and generate
+    a grounded answer.
     """
 
     results = search_hts(
@@ -152,13 +221,16 @@ def answer_hts_question(question):
 
         return {
             "answer": (
-                "I could not find relevant HTS information "
-                "in the indexed HTS data."
+                "I could not find relevant "
+                "HTS information in the "
+                "indexed HTS data."
             ),
-            "sources": []
+            "sources": [],
         }
 
-    context = build_hts_context(results)
+    context = build_hts_context(
+        results
+    )
 
     prompt = f"""
 You are an HTS tariff information assistant.
@@ -198,31 +270,141 @@ ANSWER:
         prompt
     )
 
-    sources = []
+    sources = build_hts_sources(
+        results
+    )
+
+    return {
+        "answer": answer,
+        "sources": sources,
+    }
+
+
+# ============================================================
+# DOCUMENT CONTEXT
+# ============================================================
+
+def build_document_context(
+    results
+):
+    """
+    Convert retrieved document chunks
+    into LLM context.
+    """
+
+    if not results:
+        return ""
+
+    context_parts = []
 
     for i, result in enumerate(
         results,
         start=1
     ):
-        sources.append(
-            {
-                "type": "hts",
-                "rank": i,
-                "hts_number": result.get(
-                    "htsno",
+
+        # ----------------------------------------------------
+        # Handle dictionary result
+        # ----------------------------------------------------
+
+        if isinstance(
+            result,
+            dict
+        ):
+
+            content = result.get(
+                "content",
+                result.get(
+                    "text",
                     ""
-                ),
-                "description": result.get(
-                    "description",
-                    ""
-                ),
-            }
+                )
+            )
+
+        else:
+
+            content = str(result)
+
+        if not content:
+            continue
+
+        context_parts.append(
+            f"""
+DOCUMENT CHUNK {i}
+
+{content}
+""".strip()
         )
 
-    return {
-        "answer": answer,
-        "sources": sources
-    }
+    return "\n\n".join(
+        context_parts
+    )
+
+
+# ============================================================
+# DOCUMENT SOURCES
+# ============================================================
+
+def build_sources(
+    results
+):
+    """
+    Convert retrieved document chunks
+    into persistent source objects.
+    """
+
+    sources = []
+
+    for rank, result in enumerate(
+        results,
+        start=1
+    ):
+
+        if isinstance(
+            result,
+            dict
+        ):
+
+            content = result.get(
+                "content",
+                result.get(
+                    "text",
+                    ""
+                )
+            )
+
+            chunk_id = result.get(
+                "chunk_id",
+                result.get(
+                    "id",
+                    rank
+                )
+            )
+
+            score = result.get(
+                "score",
+                None
+            )
+
+        else:
+
+            content = str(result)
+            chunk_id = rank
+            score = None
+
+        source = {
+            "type": "document",
+            "chunk_id": chunk_id,
+            "rank": rank,
+            "content": content,
+        }
+
+        if score is not None:
+            source["score"] = score
+
+        sources.append(
+            source
+        )
+
+    return sources
 
 
 # ============================================================
@@ -233,8 +415,8 @@ def build_history_context(
     conversation_messages
 ):
     """
-    Convert previous conversation messages into
-    context that can be supplied to the LLM.
+    Convert previous conversation messages
+    into context for the LLM.
     """
 
     if not conversation_messages:
@@ -242,7 +424,7 @@ def build_history_context(
 
     history_lines = []
 
-    # Keep only latest 10 messages
+    # Keep latest 10 messages
     recent_messages = (
         conversation_messages[-10:]
     )
@@ -263,12 +445,15 @@ def build_history_context(
             continue
 
         if role == "user":
+
             role_name = "USER"
 
         elif role == "assistant":
+
             role_name = "ASSISTANT"
 
         else:
+
             role_name = role.upper()
 
         history_lines.append(
@@ -283,79 +468,6 @@ def build_history_context(
         + "\n".join(history_lines)
         + "\n\n"
     )
-
-
-# ============================================================
-# BUILD DOCUMENT CONTEXT
-# ============================================================
-
-def build_document_context(
-    retrieval_results
-):
-    """
-    Convert detailed hybrid retrieval results
-    into the plain text context expected by
-    the LLM.
-    """
-
-    if not retrieval_results:
-        return ""
-
-    context_parts = []
-
-    for result in retrieval_results:
-
-        content = result.get(
-            "content",
-            ""
-        )
-
-        if content:
-            context_parts.append(
-                content
-            )
-
-    return "\n\n".join(
-        context_parts
-    )
-
-
-# ============================================================
-# BUILD SOURCE INFORMATION
-# ============================================================
-
-def build_sources(
-    retrieval_results
-):
-    """
-    Convert retrieval results into
-    frontend-friendly source information.
-    """
-
-    sources = []
-
-    for result in retrieval_results:
-
-        sources.append(
-            {
-                "type": "document",
-                "chunk_id": result.get(
-                    "chunk_id"
-                ),
-                "rank": result.get(
-                    "rank"
-                ),
-                "score": result.get(
-                    "rrf_score"
-                ),
-                "content": result.get(
-                    "content",
-                    ""
-                ),
-            }
-        )
-
-    return sources
 
 
 # ============================================================
@@ -377,12 +489,6 @@ def ask_question(
 
     Conversation history:
         Previous messages → LLM context
-
-    Returns:
-        {
-            "answer": str,
-            "sources": list
-        }
     """
 
     conversation_messages = (
@@ -395,35 +501,57 @@ def ask_question(
         )
     )
 
-
     # ========================================================
     # HTS ROUTE
     # ========================================================
 
-    if is_hts_question(question):
+    if is_hts_question(
+        question
+    ):
 
         return answer_hts_question(
             question
         )
 
+    # ========================================================
+    # DOCUMENT AVAILABILITY
+    # ========================================================
+
+    if not has_document_index():
+
+        return {
+            "answer": (
+                "Upload and index a document "
+                "before asking a question."
+            ),
+            "sources": [],
+        }
 
     # ========================================================
-    # NORMAL DOCUMENT RAG ROUTE
+    # LOAD DOCUMENT INDEX
     # ========================================================
 
     index = load_index()
 
     chunks = load_chunks()
 
+    if index is None or not chunks:
+
+        return {
+            "answer": (
+                "Upload and index a document "
+                "before asking a question."
+            ),
+            "sources": [],
+        }
 
     # ========================================================
-    # INTENT DETECTION
+    # INTENT
     # ========================================================
 
     prepared = prepare_question(
         question
     )
-
 
     # ========================================================
     # HYBRID RETRIEVAL
@@ -436,24 +564,22 @@ def ask_question(
         top_k=3
     )
 
-
     # ========================================================
-    # NO RETRIEVAL RESULTS
+    # NO RESULTS
     # ========================================================
 
     if not retrieval_results:
 
         return {
             "answer": (
-                "I couldn't find that information "
-                "in the document."
+                "I couldn't find that "
+                "information in the document."
             ),
-            "sources": []
+            "sources": [],
         }
 
-
     # ========================================================
-    # BUILD LLM CONTEXT
+    # DOCUMENT CONTEXT
     # ========================================================
 
     document_context = (
@@ -462,15 +588,13 @@ def ask_question(
         )
     )
 
-
     # ========================================================
-    # BUILD SOURCES
+    # SOURCES
     # ========================================================
 
     sources = build_sources(
         retrieval_results
     )
-
 
     # ========================================================
     # SUMMARY
@@ -478,9 +602,10 @@ def ask_question(
 
     if prepared["intent"] == "summary":
 
-        summary_prompt = (
-            "Summarize the following document content. "
-            "Include the main topics and important points. "
+        prompt = (
+            "Summarize the following document "
+            "content. Include the main topics "
+            "and important points. "
             "Do not invent information.\n\n"
             + document_context
             + history_context
@@ -488,35 +613,179 @@ def ask_question(
 
         answer = generate_answer(
             "Summarize the document.",
-            summary_prompt
+            prompt
         )
 
         return {
             "answer": answer,
-            "sources": sources
+            "sources": sources,
         }
-
 
     # ========================================================
     # NORMAL QUESTION
     # ========================================================
 
-    normal_prompt = (
+    prompt = (
         document_context
         + history_context
     )
 
     answer = generate_answer(
         question,
-        normal_prompt
+        prompt
     )
-
-
-    # ========================================================
-    # FINAL RESPONSE
-    # ========================================================
 
     return {
         "answer": answer,
-        "sources": sources
+        "sources": sources,
+    }
+    # ============================================================
+# STREAMING RAG
+# ============================================================
+
+def prepare_streaming_question(
+    question,
+    conversation_messages=None
+):
+    """
+    Prepare RAG context for true token streaming.
+
+    This function performs retrieval only.
+    Ollama generation happens afterwards.
+    """
+
+    conversation_messages = (
+        conversation_messages or []
+    )
+
+    # --------------------------------------------------------
+    # HTS
+    # --------------------------------------------------------
+
+    if is_hts_question(question):
+
+        results = search_hts(
+            question,
+            top_k=5
+        )
+
+        if not results:
+
+            return {
+                "question": question,
+                "context": "",
+                "sources": [],
+            }
+
+        context = build_hts_context(
+            results
+        )
+
+        sources = build_hts_sources(
+            results
+        )
+
+        return {
+            "question": question,
+            "context": context,
+            "sources": sources,
+        }
+
+    # --------------------------------------------------------
+    # Document index
+    # --------------------------------------------------------
+
+    if not has_document_index():
+
+        return {
+            "question": question,
+            "context": "",
+            "sources": [],
+        }
+
+    index = load_index()
+    chunks = load_chunks()
+
+    if index is None or not chunks:
+
+        return {
+            "question": question,
+            "context": "",
+            "sources": [],
+        }
+
+    # --------------------------------------------------------
+    # Intent
+    # --------------------------------------------------------
+
+    prepared = prepare_question(
+        question
+    )
+
+    # --------------------------------------------------------
+    # Hybrid retrieval
+    # --------------------------------------------------------
+
+    retrieval_results = retrieve_hybrid(
+        prepared["query"],
+        index,
+        chunks,
+        top_k=3
+    )
+
+    if not retrieval_results:
+
+        return {
+            "question": question,
+            "context": "",
+            "sources": [],
+        }
+
+    # --------------------------------------------------------
+    # Document context
+    # --------------------------------------------------------
+
+    document_context = build_document_context(
+        retrieval_results
+    )
+
+    # --------------------------------------------------------
+    # History
+    # --------------------------------------------------------
+
+    history_context = build_history_context(
+        conversation_messages
+    )
+
+    # --------------------------------------------------------
+    # Final context
+    # --------------------------------------------------------
+
+    context = (
+        document_context
+        + history_context
+    )
+
+    # --------------------------------------------------------
+    # Summary
+    # --------------------------------------------------------
+
+    if prepared["intent"] == "summary":
+
+        question_for_llm = (
+            "Summarize the document. "
+            "Include the main topics and "
+            "important points."
+        )
+
+    else:
+
+        question_for_llm = question
+
+    return {
+        "question": question_for_llm,
+        "context": context,
+        "sources": build_sources(
+            retrieval_results
+        ),
     }

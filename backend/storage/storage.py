@@ -1,7 +1,8 @@
 import pickle
 from pathlib import Path
 
-STORAGE_DIR = Path("backend/storage/data")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+STORAGE_DIR = PROJECT_ROOT / "backend" / "storage" / "data"
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -23,3 +24,11 @@ def save_chunks(chunks):
 def load_chunks():
     with open(STORAGE_DIR / "chunks.pkl", "rb") as f:
         return pickle.load(f)
+
+
+def has_document_index():
+    """Return whether a document has been indexed for question answering."""
+    return (
+        (STORAGE_DIR / "faiss_index.pkl").is_file()
+        and (STORAGE_DIR / "chunks.pkl").is_file()
+    )

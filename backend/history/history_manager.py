@@ -1,64 +1,134 @@
 import json
+import os
 import uuid
 from datetime import datetime
-from pathlib import Path
 
 
 # ============================================================
-# HISTORY STORAGE
+# STORAGE PATH
 # ============================================================
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BASE_DIR = os.path.dirname(
+    os.path.dirname(
+        os.path.dirname(
+            os.path.abspath(__file__)
+        )
+    )
+)
 
-HISTORY_DIR = PROJECT_ROOT / "data" / "history"
-HISTORY_FILE = HISTORY_DIR / "conversations.json"
+HISTORY_DIR = os.path.join(
+    BASE_DIR,
+    "data",
+    "history"
+)
+
+HISTORY_FILE = os.path.join(
+    HISTORY_DIR,
+    "conversations.json"
+)
 
 
 # ============================================================
-# INITIALIZE STORAGE
+# STORAGE HELPERS
 # ============================================================
 
 def _ensure_storage():
-    HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+    os.makedirs(
+        HISTORY_DIR,
+        exist_ok=True
+    )
 
-    if not HISTORY_FILE.exists():
-        HISTORY_FILE.write_text(
-            json.dumps({}, indent=2),
+    if not os.path.exists(HISTORY_FILE):
+        with open(
+            HISTORY_FILE,
+            "w",
             encoding="utf-8"
-        )
+        ) as file:
+            json.dump(
+                {},
+                file,
+                ensure_ascii=False,
+                indent=2
+            )
 
-
-# ============================================================
-# LOAD ALL CONVERSATIONS
-# ============================================================
 
 def _load_history():
     _ensure_storage()
 
     try:
-        return json.loads(
-            HISTORY_FILE.read_text(
-                encoding="utf-8"
-            )
-        )
-    except (json.JSONDecodeError, OSError):
+        with open(
+            HISTORY_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+            history = json.load(file)
+
+    except (
+        json.JSONDecodeError,
+        OSError
+    ):
         return {}
 
+    # --------------------------------------------------------
+    # Current project format = dictionary
+    # --------------------------------------------------------
 
-# ============================================================
-# SAVE ALL CONVERSATIONS
-# ============================================================
+    if isinstance(history, dict):
+        return history
+
+    # --------------------------------------------------------
+    # Safety migration if an old list exists
+    # --------------------------------------------------------
+
+    if isinstance(history, list):
+
+        converted = {}
+
+        for conversation in history:
+
+            if not isinstance(
+                conversation,
+                dict
+            ):
+                continue
+
+            conversation_id = conversation.get(
+                "id"
+            )
+
+            if conversation_id:
+                converted[
+                    conversation_id
+                ] = conversation
+
+        return converted
+
+    return {}
+
 
 def _save_history(history):
     _ensure_storage()
 
-    HISTORY_FILE.write_text(
-        json.dumps(
-            history,
-            indent=2,
-            ensure_ascii=False
-        ),
+    temporary_file = (
+        HISTORY_FILE + ".tmp"
+    )
+
+    with open(
+        temporary_file,
+        "w",
         encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            history,
+            file,
+            ensure_ascii=False,
+            indent=2
+        )
+
+    os.replace(
+        temporary_file,
+        HISTORY_FILE
     )
 
 
@@ -66,14 +136,18 @@ def _save_history(history):
 # CREATE CONVERSATION
 # ============================================================
 
-def create_conversation(title="New Chat"):
+def create_conversation(
+    title="New Chat"
+):
     history = _load_history()
-
-    conversation_id = str(uuid.uuid4())
 
     now = datetime.now().isoformat()
 
-    history[conversation_id] = {
+    conversation_id = str(
+        uuid.uuid4()
+    )
+
+    conversation = {
         "id": conversation_id,
         "title": title,
         "created_at": now,
@@ -81,19 +155,30 @@ def create_conversation(title="New Chat"):
         "messages": []
     }
 
+    history[conversation_id] = conversation
+
     _save_history(history)
 
-    return history[conversation_id]
+    return conversation
 
 
 # ============================================================
 # GET CONVERSATION
 # ============================================================
 
-def get_conversation(conversation_id):
+def get_conversation(
+    conversation_id
+):
     history = _load_history()
 
-    return history.get(conversation_id)
+    conversation = history.get(
+        conversation_id
+    )
+
+    if conversation is None:
+        return None
+
+    return conversation
 
 
 # ============================================================
@@ -103,7 +188,9 @@ def get_conversation(conversation_id):
 def get_all_conversations():
     history = _load_history()
 
-    conversations = list(history.values())
+    conversations = list(
+        history.values()
+    )
 
     conversations.sort(
         key=lambda item: item.get(
@@ -123,11 +210,16 @@ def get_all_conversations():
 def add_message(
     conversation_id,
     role,
-    content
+    content,
+    sources=None
 ):
     history = _load_history()
 
-    if conversation_id not in history:
+    conversation = history.get(
+        conversation_id
+    )
+
+    if conversation is None:
         return None
 
     message = {
@@ -136,43 +228,70 @@ def add_message(
         "timestamp": datetime.now().isoformat()
     }
 
-    history[conversation_id]["messages"].append(
-        message
-    )
+    # --------------------------------------------------------
+    # Persist sources for assistant messages
+    # --------------------------------------------------------
 
-    history[conversation_id]["updated_at"] = (
+    if role == "assistant":
+        message["sources"] = (
+            sources or []
+        )
+
+    conversation.setdefault(
+        "messages",
+        []
+    ).append(message)
+
+    conversation["updated_at"] = (
         datetime.now().isoformat()
     )
 
-    # Automatically use the first user question
-    # as the conversation title.
+    # --------------------------------------------------------
+    # Automatically create title from
+    # first user question
+    # --------------------------------------------------------
+
     if (
         role == "user"
-        and history[conversation_id]["title"] == "New Chat"
+        and (
+            not conversation.get("title")
+            or conversation.get("title")
+            == "New Chat"
+        )
     ):
+
         title = content.strip()
 
         if len(title) > 60:
-            title = title[:57] + "..."
+            title = (
+                title[:57]
+                + "..."
+            )
 
-        history[conversation_id]["title"] = title
+        conversation["title"] = title
+
+    history[conversation_id] = conversation
 
     _save_history(history)
 
-    return message
+    return conversation
 
 
 # ============================================================
 # DELETE CONVERSATION
 # ============================================================
 
-def delete_conversation(conversation_id):
+def delete_conversation(
+    conversation_id
+):
     history = _load_history()
 
     if conversation_id not in history:
         return False
 
-    del history[conversation_id]
+    del history[
+        conversation_id
+    ]
 
     _save_history(history)
 

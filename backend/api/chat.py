@@ -4,11 +4,12 @@ from pydantic import BaseModel
 from typing import Optional
 import json
 
-from backend.rag.rag_pipeline import ask_question
-
-from backend.llm.llm_client import (
-    generate_answer_stream,
+from backend.rag.rag_pipeline import (
+    ask_question,
+    prepare_streaming_question,
 )
+
+from backend.llm.llm_client import generate_answer_stream
 
 from backend.history.history_manager import (
     create_conversation,
@@ -35,300 +36,243 @@ class ChatRequest(BaseModel):
 
 @router.post("/chat")
 def chat(request: ChatRequest):
-
-    # --------------------------------------------------------
-    # 1. Validate question
-    # --------------------------------------------------------
-
     question = request.question.strip()
 
     if not question:
-        return {
-            "error": "Question cannot be empty."
-        }
-
-    # --------------------------------------------------------
-    # 2. Get or create conversation
-    # --------------------------------------------------------
+        return {"error": "Question cannot be empty."}
 
     conversation_id = request.conversation_id
 
     if conversation_id:
-
-        conversation = get_conversation(
-            conversation_id
-        )
+        conversation = get_conversation(conversation_id)
 
         if conversation is None:
-
-            conversation = create_conversation(
-                "New Chat"
-            )
-
+            conversation = create_conversation("New Chat")
             conversation_id = conversation["id"]
-
     else:
-
-        conversation = create_conversation(
-            "New Chat"
-        )
-
+        conversation = create_conversation("New Chat")
         conversation_id = conversation["id"]
-
-    # --------------------------------------------------------
-    # 3. Get previous conversation history
-    # --------------------------------------------------------
 
     previous_messages = []
 
     if conversation:
-
-        previous_messages = conversation.get(
-            "messages",
-            []
-        )
-
-    # --------------------------------------------------------
-    # 4. Save user message
-    # --------------------------------------------------------
+        previous_messages = conversation.get("messages", [])
 
     add_message(
         conversation_id,
         "user",
-        question
+        question,
     )
 
-    # --------------------------------------------------------
-    # 5. Run RAG pipeline
-    # --------------------------------------------------------
-
     try:
-
         result = ask_question(
             question,
-            conversation_messages=previous_messages
+            conversation_messages=previous_messages,
         )
-
     except Exception as exc:
-
         raise HTTPException(
             status_code=503,
             detail=(
                 "The answer service is unavailable. "
-                "Ensure Ollama is running and the "
-                "configured model is installed."
+                "Ensure Ollama is running and the configured model is installed."
             ),
         ) from exc
 
-    # --------------------------------------------------------
-    # 6. Extract answer and sources
-    # --------------------------------------------------------
-
     answer = result.get(
         "answer",
-        "I couldn't generate an answer."
+        "I couldn't generate an answer.",
     )
 
-    sources = result.get(
-        "sources",
-        []
-    )
-
-    # --------------------------------------------------------
-    # 7. Save assistant response + sources
-    # --------------------------------------------------------
+    sources = result.get("sources", [])
 
     add_message(
         conversation_id,
         "assistant",
         answer,
-        sources
+        sources,
     )
-
-    # --------------------------------------------------------
-    # 8. Return response
-    # --------------------------------------------------------
 
     return {
         "conversation_id": conversation_id,
         "answer": answer,
-        "sources": sources
+        "sources": sources,
     }
 
 
 # ============================================================
-# STREAMING CHAT ENDPOINT
+# TRUE STREAMING CHAT ENDPOINT
 # ============================================================
 
 @router.post("/chat/stream")
 def chat_stream(request: ChatRequest):
-
-    # --------------------------------------------------------
-    # 1. Validate question
-    # --------------------------------------------------------
-
     question = request.question.strip()
 
     if not question:
-
         def empty_question():
-
             yield (
                 "event: error\n"
-                + "data: "
-                + json.dumps(
-                    {
-                        "message":
-                            "Question cannot be empty."
-                    }
-                )
-                + "\n\n"
+                f"data: {json.dumps({'message': 'Question cannot be empty.'})}\n\n"
             )
 
         return StreamingResponse(
             empty_question(),
-            media_type="text/event-stream"
+            media_type="text/event-stream",
         )
 
     # --------------------------------------------------------
-    # 2. Get or create conversation
+    # Get or create conversation
     # --------------------------------------------------------
 
     conversation_id = request.conversation_id
 
     if conversation_id:
-
-        conversation = get_conversation(
-            conversation_id
-        )
+        conversation = get_conversation(conversation_id)
 
         if conversation is None:
-
-            conversation = create_conversation(
-                "New Chat"
-            )
-
+            conversation = create_conversation("New Chat")
             conversation_id = conversation["id"]
-
     else:
-
-        conversation = create_conversation(
-            "New Chat"
-        )
-
+        conversation = create_conversation("New Chat")
         conversation_id = conversation["id"]
-
-    # --------------------------------------------------------
-    # 3. Get previous messages
-    # --------------------------------------------------------
 
     previous_messages = []
 
     if conversation:
+        previous_messages = conversation.get("messages", [])
 
-        previous_messages = conversation.get(
-            "messages",
-            []
-        )
-
-    # --------------------------------------------------------
-    # 4. Save user message
-    # --------------------------------------------------------
-
+    # Save the user message before generation.
     add_message(
         conversation_id,
         "user",
-        question
+        question,
     )
 
     # --------------------------------------------------------
-    # 5. Run RAG before streaming
-    #
-    # This keeps the existing RAG pipeline intact.
+    # Retrieval only
+    # IMPORTANT: Do NOT call ask_question() here.
+    # ask_question() performs a complete LLM generation.
     # --------------------------------------------------------
 
     try:
-
-        result = ask_question(
+        prepared = prepare_streaming_question(
             question,
-            conversation_messages=previous_messages
+            conversation_messages=previous_messages,
         )
-
     except Exception as exc:
-
-        def service_error():
-
+        def preparation_error():
             yield (
                 "event: error\n"
                 + "data: "
                 + json.dumps(
                     {
-                        "message": (
-                            "The answer service is unavailable. "
-                            "Ensure Ollama is running and the "
-                            "configured model is installed."
-                        )
+                        "message": "Failed to prepare the document context.",
+                        "detail": str(exc),
                     },
-                    ensure_ascii=False
+                    ensure_ascii=False,
                 )
                 + "\n\n"
             )
 
         return StreamingResponse(
-            service_error(),
-            media_type="text/event-stream"
+            preparation_error(),
+            media_type="text/event-stream",
         )
 
-    # --------------------------------------------------------
-    # 6. Extract result
-    # --------------------------------------------------------
+    llm_question = prepared.get("question", question)
+    context = prepared.get("context", "")
+    sources = prepared.get("sources", [])
 
-    answer = result.get(
-        "answer",
-        ""
-    )
+    # Empty context means retrieval could not provide an answer.
+    # Do not send an empty context to the LLM because that would
+    # unnecessarily allow a model-generated guess.
+    if not context.strip():
+        fallback = (
+            "I couldn't find that information in the document."
+        )
 
-    sources = result.get(
-        "sources",
-        []
-    )
+        if not sources:
+            fallback = (
+                "Upload and index a document before asking a question."
+                if not conversation_messages and not prepared.get("context")
+                else fallback
+            )
 
-    # --------------------------------------------------------
-    # 7. Streaming generator
-    # --------------------------------------------------------
-
-    def generate():
-
-        full_answer = ""
-
-        try:
-
-            # ------------------------------------------------
-            # Send conversation ID
-            # ------------------------------------------------
-
+        def fallback_stream():
             yield (
                 "event: conversation\n"
                 + "data: "
                 + json.dumps(
-                    {
-                        "conversation_id":
-                            conversation_id
-                    },
-                    ensure_ascii=False
+                    {"conversation_id": conversation_id},
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+            yield (
+                "event: token\n"
+                + "data: "
+                + json.dumps(
+                    {"content": fallback},
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+            yield (
+                "event: sources\n"
+                + "data: "
+                + json.dumps(
+                    {"sources": sources},
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
+            add_message(
+                conversation_id,
+                "assistant",
+                fallback,
+                sources,
+            )
+            yield (
+                "event: done\n"
+                + "data: "
+                + json.dumps(
+                    {"conversation_id": conversation_id},
+                    ensure_ascii=False,
                 )
                 + "\n\n"
             )
 
-            # ------------------------------------------------
-            # Stream generated response
-            # ------------------------------------------------
+        return StreamingResponse(
+            fallback_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no-cache",
+            },
+        )
+
+    # --------------------------------------------------------
+    # Stream exactly ONE LLM generation
+    # --------------------------------------------------------
+
+    def generate():
+        full_answer = ""
+
+        try:
+            yield (
+                "event: conversation\n"
+                + "data: "
+                + json.dumps(
+                    {"conversation_id": conversation_id},
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
 
             for token in generate_answer_stream(
-                question,
-                answer
+                llm_question,
+                context,
             ):
-
                 if not token:
                     continue
 
@@ -338,83 +282,57 @@ def chat_stream(request: ChatRequest):
                     "event: token\n"
                     + "data: "
                     + json.dumps(
-                        {
-                            "content": token
-                        },
-                        ensure_ascii=False
+                        {"content": token},
+                        ensure_ascii=False,
                     )
                     + "\n\n"
                 )
 
-            # ------------------------------------------------
-            # Send sources
-            # ------------------------------------------------
+            if not full_answer:
+                full_answer = "I couldn't generate an answer."
 
             yield (
                 "event: sources\n"
                 + "data: "
                 + json.dumps(
-                    {
-                        "sources": sources
-                    },
-                    ensure_ascii=False
+                    {"sources": sources},
+                    ensure_ascii=False,
                 )
                 + "\n\n"
             )
-
-            # ------------------------------------------------
-            # Save assistant response
-            # ------------------------------------------------
 
             add_message(
                 conversation_id,
                 "assistant",
                 full_answer,
-                sources
+                sources,
             )
-
-            # ------------------------------------------------
-            # Done
-            # ------------------------------------------------
 
             yield (
                 "event: done\n"
                 + "data: "
                 + json.dumps(
-                    {
-                        "conversation_id":
-                            conversation_id
-                    },
-                    ensure_ascii=False
+                    {"conversation_id": conversation_id},
+                    ensure_ascii=False,
                 )
                 + "\n\n"
             )
 
         except Exception as exc:
-
-            print(
-                "STREAMING ERROR:",
-                repr(exc)
-            )
+            print("STREAMING ERROR:", repr(exc))
 
             yield (
                 "event: error\n"
                 + "data: "
                 + json.dumps(
                     {
-                        "message":
-                            "Failed to stream AI response.",
-                        "detail":
-                            str(exc)
+                        "message": "Failed to stream AI response.",
+                        "detail": str(exc),
                     },
-                    ensure_ascii=False
+                    ensure_ascii=False,
                 )
                 + "\n\n"
             )
-
-    # --------------------------------------------------------
-    # 8. Return SSE response
-    # --------------------------------------------------------
 
     return StreamingResponse(
         generate(),
@@ -422,6 +340,6 @@ def chat_stream(request: ChatRequest):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no-cache"
-        }
+            "X-Accel-Buffering": "no-cache",
+        },
     )

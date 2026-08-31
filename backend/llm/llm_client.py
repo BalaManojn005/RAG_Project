@@ -1,7 +1,7 @@
 from ollama import chat
 
 
-MODEL = "gemma3:4b"
+MODEL = "qwen2.5:3b-instruct"
 
 
 # ============================================================
